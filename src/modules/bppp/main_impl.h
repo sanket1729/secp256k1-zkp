@@ -143,22 +143,26 @@ void secp256k1_bppp_generators_destroy(const secp256k1_context* ctx, secp256k1_b
 size_t secp256k1_bppp_rangeproof_proof_length(
     const secp256k1_context* ctx,
     size_t n_bits,
-    size_t base
+    size_t base,
+    size_t num_proofs
 ) {
-    size_t num_digits, n_rounds, g_len, h_len;
+    size_t num_digits_per_proof, total_digits, n_rounds, g_len, h_len;
+    ARG_CHECK(n_bits > 0);
+    ARG_CHECK(num_proofs > 0);
     VERIFY_CHECK(ctx != NULL);
     if (n_bits > 64 || base < 2 || base > 64) {
         return 0;
     }
 
-    if (!secp256k1_is_power_of_two(base) || !secp256k1_is_power_of_two(n_bits)) {
+    if (!secp256k1_is_power_of_two(base) || !secp256k1_is_power_of_two(n_bits) || !secp256k1_is_power_of_two(num_proofs)) {
         return 0;
     }
-    num_digits = n_bits / secp256k1_bppp_log2(base);
-    if (!secp256k1_is_power_of_two(num_digits)) {
+    num_digits_per_proof = n_bits / secp256k1_bppp_log2(base);
+    if (!secp256k1_is_power_of_two(num_digits_per_proof)) {
         return 0;
     }
-    g_len = num_digits > base ? num_digits : base;
+    total_digits = num_digits_per_proof * num_proofs;
+    g_len = total_digits > base ? total_digits : base;
     h_len = 8;
     n_rounds = secp256k1_bppp_log2(g_len > h_len ? g_len : h_len);
     return 33 * 4 + 65*n_rounds + 64;
@@ -217,8 +221,9 @@ int secp256k1_bppp_rangeproof_prove(
         plen,
         n_bits,
         base,
-        value,
-        min_value,
+        1,
+        &value,
+        &min_value,
         &commitp,
         &blinds,
         nonce,
@@ -267,7 +272,8 @@ int secp256k1_bppp_rangeproof_verify(
         plen,
         n_bits,
         base,
-        min_value,
+        1,
+        &min_value,
         &commitp,
         extra_commit,
         extra_commit_len

@@ -75,11 +75,13 @@ SECP256K1_API void secp256k1_bppp_generators_destroy(
  *               length of the serialized proof otherwise
  *  In:  n_bits: number of bits to prove (max 64, should usually be 64)
  *         base: base representation to be used in proof construction (max 256, recommended 16)
+ *         num_proofs: number of proofs to be serialized
  */
 SECP256K1_API size_t secp256k1_bppp_rangeproof_proof_length(
     const secp256k1_context* ctx,
     size_t n_bits,
-    size_t base
+    size_t base,
+    size_t num_proofs
 ) SECP256K1_ARG_NONNULL(1);
 
 /** Produces a Bulletproofs++ rangeproof. Returns 1 on success, 0 on failure.
@@ -124,7 +126,7 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_bppp_rangeproof_prove(
     const unsigned char* nonce,
     const unsigned char* extra_commit,
     size_t extra_commit_len
-) SECP256K1_ARG_NONNULL(1) SECP256K1_ARG_NONNULL(2) SECP256K1_ARG_NONNULL(3) SECP256K1_ARG_NONNULL(4) SECP256K1_ARG_NONNULL(5) SECP256K1_ARG_NONNULL(11) SECP256K1_ARG_NONNULL(12) SECP256K1_ARG_NONNULL(13);
+) SECP256K1_ARG_NONNULL(1) SECP256K1_ARG_NONNULL(2) SECP256K1_ARG_NONNULL(3) SECP256K1_ARG_NONNULL(4) SECP256K1_ARG_NONNULL(5) SECP256K1_ARG_NONNULL(6) SECP256K1_ARG_NONNULL(11) SECP256K1_ARG_NONNULL(12) SECP256K1_ARG_NONNULL(13);
 
 /** Verifies an Bulletproofs++ rangeproof. Returns 1 on success, 0 on failure.
  *  Args:      ctx: pointer to a context object
@@ -155,6 +157,85 @@ SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_bppp_rangeproof_verify(
     const unsigned char* extra_commit,
     size_t extra_commit_len
 ) SECP256K1_ARG_NONNULL(1) SECP256K1_ARG_NONNULL(2) SECP256K1_ARG_NONNULL(3) SECP256K1_ARG_NONNULL(4) SECP256K1_ARG_NONNULL(5) SECP256K1_ARG_NONNULL(10);
+
+/** Produces a Bulletproofs++ aggregate rangeproof. Returns 1 on success, 0 on failure.
+ * Proof creation can only fail if the arguments are invalid. The documentation
+ * below specifies the constraints on inputs and arguments under which this API
+ * can fail.
+ *  Args:      ctx: pointer to a context object
+ *         scratch: pointer to a scratch space
+ *            gens: pointer to the generator set to use, which must have exactly
+ *                 `n = max(num_digits, base) + 7` generators, where num_digits is the number.
+ *       asset_gen: pointer to the asset generator for the Pedersen/CT commitment
+ *  Out:     proof: pointer to a byte array to output the proof into
+ *  In/Out:   plen: pointer to the size of the above array; will be set to the actual size of
+ *                  the serialized proof. To learn this value in advance, to allocate a sufficient
+ *                  buffer, call `secp256k1_bppp_rangeproof_proof_length`
+ *  In:     n_bits: size of range being proven, in bits. Must be a power of two,
+ *                  and at most 64.
+ *            base: base representation to be used in proof construction. Must be a power of two,
+ *      num_proofs: number of proofs to aggregate
+ *          values: array of values of size num_proofs committed in the Pedersen commitment.
+ *                  Each value must be less than 2^n_bits.
+ *      min_values: array of minimum values of size num_proofs of the range being proven. Each
+ *                  value in min_values must be less than corresponding value. min_values[i] <= values[i]
+ *         commits: array of Pedersen commitments of size num_proofs being proven
+ *          blinds: array of blinding factor for each of Pedersen commitment. Must be a 32 byte
+ *                  valid scalar within secp curve order.
+ *           nonce: seed for the RNG used to generate random data during proving
+ *    extra_commit: arbitrary extra data that the proof commits to (may be NULL if extra_commit_len is 0)
+ *    extra_commit_len: length of the arbitrary extra data.
+ */
+SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_bppp_rangeproof_agg_prove(
+    const secp256k1_context* ctx,
+    secp256k1_scratch_space *scratch,
+    const secp256k1_bppp_generators* gens,
+    const secp256k1_generator* asset_gen,
+    unsigned char* proof,
+    size_t* plen,
+    const size_t n_bits,
+    const size_t base,
+    const size_t num_proofs,
+    const uint64_t* value,
+    const uint64_t* min_value,
+    const secp256k1_pedersen_commitment* commit,
+    const unsigned char* blind,
+    const unsigned char* nonce,
+    const unsigned char* extra_commit,
+    size_t extra_commit_len
+) SECP256K1_ARG_NONNULL(1) SECP256K1_ARG_NONNULL(2) SECP256K1_ARG_NONNULL(3) SECP256K1_ARG_NONNULL(4) SECP256K1_ARG_NONNULL(5) SECP256K1_ARG_NONNULL(6) SECP256K1_ARG_NONNULL(10) SECP256K1_ARG_NONNULL(11) SECP256K1_ARG_NONNULL(12) SECP256K1_ARG_NONNULL(13) SECP256K1_ARG_NONNULL(14);
+
+/** Verifies an Bulletproofs++ rangeproof. Returns 1 on success, 0 on failure.
+ *  Args:      ctx: pointer to a context object
+ *         scratch: pointer to a scratch space
+ *            gens: pointer to the generator set to use, which must have at least 2*n_bits generators
+ *       asset_gen: pointer to the asset generator for the CT commitment
+ *  In:      proof: pointer to a byte array containing the serialized proof
+ *            plen: length of the serialized proof
+ *          n_bits: size of range being proven, in bits. Must be a power of two,
+ *                  and at most 64.
+ *            base: base representation to be used in proof construction. Must be a power of two,
+ *      num_proofs: number of proofs to aggregate
+ *      min_values: array of minimum values of size num_proofs of the range being proven.
+ *         commits: array of Pedersen commitments of size num_proofs being proven
+ *    extra_commit: arbitrary extra data that the proof commits to (may be NULL if extra_commit_len is 0)
+ *    extra_commit_len: length of the arbitrary extra data
+ */
+SECP256K1_API SECP256K1_WARN_UNUSED_RESULT int secp256k1_bppp_rangeproof_agg_verify(
+    const secp256k1_context* ctx,
+    secp256k1_scratch_space *scratch,
+    const secp256k1_bppp_generators* gens,
+    const secp256k1_generator* asset_gen,
+    const unsigned char* proof,
+    const size_t plen,
+    const uint64_t n_bits,
+    const uint64_t base,
+    const size_t num_proofs,
+    const uint64_t* min_value,
+    const secp256k1_pedersen_commitment* commit,
+    const unsigned char* extra_commit,
+    size_t extra_commit_len
+) SECP256K1_ARG_NONNULL(1) SECP256K1_ARG_NONNULL(2) SECP256K1_ARG_NONNULL(3) SECP256K1_ARG_NONNULL(4) SECP256K1_ARG_NONNULL(5) SECP256K1_ARG_NONNULL(10) SECP256K1_ARG_NONNULL(11);
 
 # ifdef __cplusplus
 }
