@@ -201,6 +201,9 @@ int secp256k1_bppp_rangeproof_prove(
     ARG_CHECK(extra_commit != NULL || extra_commit_len == 0);
 
     secp256k1_scalar_set_b32(&blinds, blind, &overflow);
+    /* Constant time note: We don't care about invalid inputs.
+       All valid inputs need have constant time.
+    */
     if (overflow) {
         return 0;
     }
@@ -278,6 +281,149 @@ int secp256k1_bppp_rangeproof_verify(
         extra_commit,
         extra_commit_len
     );
+}
+
+int secp256k1_bppp_rangeproof_agg_prove(
+    const secp256k1_context* ctx,
+    secp256k1_scratch_space *scratch,
+    const secp256k1_bppp_generators* gens,
+    const secp256k1_generator* asset_gen,
+    unsigned char* proof,
+    size_t* plen,
+    const size_t n_bits,
+    const size_t base,
+    const size_t num_proofs,
+    const uint64_t* values,
+    const uint64_t* min_values,
+    const secp256k1_pedersen_commitment* commit,
+    const unsigned char* blinds,
+    const unsigned char* nonce,
+    const unsigned char* extra_commit,
+    size_t extra_commit_len
+) {
+    secp256k1_ge asset_genp;
+    secp256k1_ge* commitp;
+    secp256k1_scalar* blind_scalars;
+    int overflow, res;
+    size_t scratch_checkpoint, i;
+
+    VERIFY_CHECK(ctx != NULL);
+    VERIFY_CHECK(scratch != NULL);
+    ARG_CHECK(gens != NULL);
+    ARG_CHECK(asset_gen != NULL);
+    ARG_CHECK(proof != NULL);
+    ARG_CHECK(plen != NULL);
+    ARG_CHECK(commit != NULL);
+    ARG_CHECK(blinds != NULL);
+    ARG_CHECK(nonce != NULL);
+    ARG_CHECK(extra_commit != NULL || extra_commit_len == 0);
+
+    scratch_checkpoint = secp256k1_scratch_checkpoint(&ctx->error_callback, scratch);
+    commitp = (secp256k1_ge*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, num_proofs * sizeof(secp256k1_ge));
+    blind_scalars = (secp256k1_scalar*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, num_proofs * sizeof(secp256k1_scalar));
+    if (commitp == NULL || blind_scalars == NULL) {
+        secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, scratch_checkpoint);
+        return 0;
+    }
+
+    for (i = 0; i < num_proofs; i++) {
+        secp256k1_pedersen_commitment_load(&commitp[i], &commit[i]);
+        secp256k1_fe_normalize_var(&commitp[i].x);
+        secp256k1_fe_normalize_var(&commitp[i].y);
+        secp256k1_scalar_set_b32(&blind_scalars[i], &blinds[32*i], &overflow);
+        /* Constant time note: We don't care about invalid inputs.
+        All valid inputs need have constant time.
+        */
+        if (overflow) {
+            return 0;
+        }
+    }
+    secp256k1_generator_load(&asset_genp, asset_gen);
+    secp256k1_fe_normalize_var(&asset_genp.x);
+    secp256k1_fe_normalize_var(&asset_genp.y);
+
+    res = secp256k1_bppp_rangeproof_prove_impl(
+        ctx,
+        scratch,
+        gens,
+        &asset_genp,
+        proof,
+        plen,
+        n_bits,
+        base,
+        num_proofs,
+        values,
+        min_values,
+        commitp,
+        blind_scalars,
+        nonce,
+        extra_commit,
+        extra_commit_len
+    );
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, scratch_checkpoint);
+    return res;
+}
+
+int secp256k1_bppp_rangeproof_agg_verify(
+    const secp256k1_context* ctx,
+    secp256k1_scratch_space *scratch,
+    const secp256k1_bppp_generators* gens,
+    const secp256k1_generator* asset_gen,
+    const unsigned char* proof,
+    const size_t plen,
+    const uint64_t n_bits,
+    const uint64_t base,
+    const size_t num_proofs,
+    const uint64_t* min_values,
+    const secp256k1_pedersen_commitment* commit,
+    const unsigned char* extra_commit,
+    size_t extra_commit_len
+) {
+    secp256k1_ge asset_genp;
+    secp256k1_ge* commitp;
+    size_t scratch_checkpoint, i;
+    int res;
+
+    VERIFY_CHECK(ctx != NULL);
+    VERIFY_CHECK(scratch != NULL);
+    ARG_CHECK(gens != NULL);
+    ARG_CHECK(asset_gen != NULL);
+    ARG_CHECK(proof != NULL);
+    ARG_CHECK(commit != NULL);
+    ARG_CHECK(extra_commit != NULL || extra_commit_len == 0);
+
+    scratch_checkpoint = secp256k1_scratch_checkpoint(&ctx->error_callback, scratch);
+    commitp = (secp256k1_ge*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, num_proofs * sizeof(secp256k1_ge));
+    if (commitp == NULL) {
+        secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, scratch_checkpoint);
+        return 0;
+    }
+    for (i = 0; i < num_proofs; i++) {
+        secp256k1_pedersen_commitment_load(&commitp[i], &commit[i]);
+        secp256k1_fe_normalize_var(&commitp[i].x);
+        secp256k1_fe_normalize_var(&commitp[i].y);
+    }
+    secp256k1_generator_load(&asset_genp, asset_gen);
+    secp256k1_fe_normalize_var(&asset_genp.x);
+    secp256k1_fe_normalize_var(&asset_genp.y);
+
+    res = secp256k1_bppp_rangeproof_verify_impl(
+        ctx,
+        scratch,
+        gens,
+        &asset_genp,
+        proof,
+        plen,
+        n_bits,
+        base,
+        num_proofs,
+        min_values,
+        commitp,
+        extra_commit,
+        extra_commit_len
+    );
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, scratch_checkpoint);
+    return res;
 }
 
 #endif

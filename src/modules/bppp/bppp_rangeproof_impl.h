@@ -14,6 +14,7 @@
 #include "ecmult_const.h"
 #include "field.h"
 #include "include/secp256k1_bppp.h"
+#include "print.h"
 
 #include "modules/bppp/bppp_util.h"
 #include "modules/bppp/bppp_transcript_impl.h"
@@ -91,7 +92,7 @@ static void secp256k1_bppp_rangeproof_prove_round1_impl(
     secp256k1_ecmult_const(&d_commj, asset_genp, &prover_ctx->b_d, 256);
 
     for (k = 0; k < num_proofs; k++) {
-        size_t value = values[k] - min_values[k];
+        uint64_t value = values[k] - min_values[k];
         for (i = 0; i < num_digits; i++) {
             secp256k1_gej resj;
             secp256k1_ge d_comm;
@@ -272,7 +273,7 @@ static const secp256k1_scalar* secp256k1_bppp_w_coeff(
    |w|^2 =
    alpha_m**2*t**8 +
    2*alpha_m*r*t**7 +
-   t**6*(2*alpha_m*d + r**2) +
+   t**6*(2* *d + r**2) +
    t**5*(2*alpha_m*m + 2*d*r) +
    t**4*(2*alpha_m*s + d**2 + 2*m*r) +
    t**3*(2*d*m + 2*r*s) +
@@ -493,15 +494,18 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
     size_t *output_len,
     secp256k1_sha256* transcript,
     const secp256k1_scalar* gamma,
-    const size_t total_digits,
-    const size_t digit_base
+    const size_t num_digits,
+    const size_t digit_base,
+    const size_t num_proofs
 ) {
     size_t i, scratch_checkpoint;
+    size_t total_digits = num_digits * num_proofs;
     size_t g_offset = digit_base > total_digits ? digit_base : total_digits;
     /* Compute w = s + t*m + t^2*d + t^3*r + t^4*alpha_m. Store w in s*/
     /* Has capacity 8 because we can re-use it as the c-poly. */
     secp256k1_scalar t_pows[8];
     secp256k1_ge *gs;
+    int res;
     secp256k1_bppp_rangeproof_powers_of_q(&t_pows[0], &prover_ctx->t, 7); /* Computes from t^1 to t^7 */
 
     for (i = 0; i < g_offset; i++) {
@@ -528,7 +532,7 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
     }
     /* Manually add l_d2 and l_d4 */
     {
-        secp256k1_scalar tmp;
+        secp256k1_scalar tmp, gamma_sum;
         secp256k1_scalar_mul(&tmp, &prover_ctx->l_m[3], &t_pows[1]);
         secp256k1_scalar_negate(&tmp, &tmp);/* l_d2 = -l_m3 */
         secp256k1_scalar_add(&prover_ctx->l_s[2], &prover_ctx->l_s[2], &tmp);
@@ -537,9 +541,19 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
         secp256k1_scalar_negate(&tmp, &tmp);/* l_d4 = -l_m5 */
         secp256k1_scalar_add(&prover_ctx->l_s[4], &prover_ctx->l_s[4], &tmp);
 
+        {
+            secp256k1_scalar lambda_pow_i, gamma_lambda_pow_i;
+            secp256k1_scalar_set_int(&lambda_pow_i, 1);
+            secp256k1_scalar_clear(&gamma_sum);
+            for (i = 0; i < num_proofs; i++) {
+                secp256k1_scalar_mul(&gamma_lambda_pow_i, &gamma[i], &lambda_pow_i);
+                secp256k1_scalar_add(&gamma_sum, &gamma_sum, &gamma_lambda_pow_i);
+                secp256k1_scalar_mul(&lambda_pow_i, &lambda_pow_i, &prover_ctx->lambda);
+            }
+        }
         /* Add two_gamma * t5 to l_s[0] */
         secp256k1_scalar_add(&tmp, &t_pows[4], &t_pows[4]);
-        secp256k1_scalar_mul(&tmp, &tmp, gamma);
+        secp256k1_scalar_mul(&tmp, &tmp, &gamma_sum);
         secp256k1_scalar_add(&prover_ctx->l_s[0], &prover_ctx->l_s[0], &tmp);
     }
     /* Set non used 7th and 8th l_s to 0 */
@@ -566,7 +580,7 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
     }
     memcpy(gs, gens->gens, (gens->n) * sizeof(secp256k1_ge));
 
-    return secp256k1_bppp_rangeproof_norm_product_prove(
+    res = secp256k1_bppp_rangeproof_norm_product_prove(
         ctx,
         scratch,
         output,
@@ -583,6 +597,9 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
         t_pows,
         8
     );
+
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, scratch_checkpoint);
+    return res;
 }
 
 static int secp256k1_bppp_rangeproof_prove_impl(
@@ -708,7 +725,7 @@ static int secp256k1_bppp_rangeproof_prove_impl(
         asset_genp,
         &proof[n_proof_bytes_written],
         &transcript,
-        total_digits,
+        num_digits,
         digit_base,
         num_proofs,
         gamma,
@@ -728,8 +745,9 @@ static int secp256k1_bppp_rangeproof_prove_impl(
         &norm_proof_len,
         &transcript,
         gamma,
-        total_digits,
-        digit_base
+        num_digits,
+        digit_base,
+        num_proofs
     );
     /* No need to worry about constant time-ness from this point. All data is public */
     if (res) {
@@ -747,6 +765,7 @@ typedef struct secp256k1_bppp_verify_cb_data {
     const secp256k1_ge *asset_genp;
     const secp256k1_ge *commit;
     const secp256k1_ge *g_gens;
+    secp256k1_scalar *lambda_pow_j;
     const secp256k1_scalar *lambda;
     size_t num_proofs;
 } secp256k1_bppp_verify_cb_data;
@@ -786,10 +805,14 @@ static int secp256k1_bppp_verify_cb(secp256k1_scalar *sc, secp256k1_ge *pt, size
             /* 2t^5 V(commit) */
             idx -= 5;
             if (idx < data->num_proofs) {
-                *pt = data->commit[idx];
+                secp256k1_scalar two;
+                secp256k1_scalar_set_int(&two, 2);
                 /* TODO: pass 2^t5 here directly */
                 *sc = data->t_pows[4];
-                secp256k1_scalar_add(sc, sc, sc);
+                secp256k1_scalar_mul(sc, sc, &two);
+                secp256k1_scalar_mul(sc, sc, data->lambda_pow_j);
+                secp256k1_scalar_mul(data->lambda_pow_j, data->lambda_pow_j, data->lambda);
+                *pt = data->commit[idx];
             } else {
                 idx -= data->num_proofs;
                 *pt = data->g_gens[idx];
@@ -894,7 +917,6 @@ static int secp256k1_bppp_rangeproof_verify_impl(
     {
         /* g_vec_pub_delta[i] = (b^i*t^3 + (-x)*t^2 + (x/e+i)*t^4)*q_inv^i + e*t^2 */
         secp256k1_scalar b_pow_i_t3, neg_x_t2, x_t4, e_t2, base, lambda_pow_j;
-        b_pow_i_t3 = t_pows[2];
         secp256k1_scalar_negate(&neg_x_t2, &x);
         secp256k1_scalar_mul(&neg_x_t2, &neg_x_t2, &t_pows[1]);
         x_t4 = t_pows[3];
@@ -958,8 +980,9 @@ static int secp256k1_bppp_rangeproof_verify_impl(
                 secp256k1_scalar_add(&v_g1, &v_g1, &neg_x_q_inv_pow_plus_e); /* v_g1 = <q^(i+1), 1> + <b^i, -x*q^-(i+1) + e> */
                 secp256k1_scalar_mul(&b_pow_i, &b_pow_i, &base);
             }
-            secp256k1_scalar_set_int(&sc_min_v, min_values[j]);
+            secp256k1_scalar_set_u64(&sc_min_v, min_values[j]);
             secp256k1_scalar_negate(&sc_min_v, &sc_min_v);
+            secp256k1_scalar_mul(&sc_min_v, &sc_min_v, &lambda_pow_j);
             secp256k1_scalar_add(&v_g1, &v_g1, &sc_min_v); /* v_g1 = <q^(i+1), 1> + <b^i, -x*q^-(i+1) + e> - min_value */
             secp256k1_scalar_mul(&lambda_pow_j, &lambda_pow_j, &lambda);
         }
@@ -982,6 +1005,7 @@ static int secp256k1_bppp_rangeproof_verify_impl(
         secp256k1_bppp_verify_cb_data cb_data;
         secp256k1_gej c_commj;
         secp256k1_ge c_comm;
+        secp256k1_scalar lambda_pow_j;
         size_t num_points;
         cb_data.g_vec_pub_deltas = g_vec_pub_deltas;
         cb_data.v = &v_g;
@@ -992,6 +1016,8 @@ static int secp256k1_bppp_rangeproof_verify_impl(
         cb_data.t_pows = t_pows;
         cb_data.num_proofs = num_proofs;
         cb_data.lambda = &lambda;
+        secp256k1_scalar_set_int(&lambda_pow_j, 1);
+        cb_data.lambda_pow_j = &lambda_pow_j;
         num_points = 5 + num_proofs + g_offset;
 
         if (!secp256k1_ecmult_multi_var(&ctx->error_callback, scratch, &c_commj, NULL, secp256k1_bppp_verify_cb, (void*) &cb_data, num_points)) {

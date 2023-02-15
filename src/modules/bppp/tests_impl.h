@@ -596,8 +596,6 @@ void rangeproof_test(size_t digit_base, size_t num_bits, uint64_t value, uint64_
     plen = 1000;
     asset_genp = *secp256k1_generator_h;
     CHECK(secp256k1_pedersen_commit(ctx, &commit, blind, value, &asset_genp));
-    secp256k1_bppp_generators_serialize(ctx, gs, proof, &plen);
-    plen = 1000;
     secp256k1_sha256_initialize(&transcript);
 
 
@@ -615,14 +613,64 @@ void rangeproof_test(size_t digit_base, size_t num_bits, uint64_t value, uint64_
     secp256k1_bppp_generators_destroy(ctx, gs);
 }
 
+void rangeproof_agg_test(size_t digit_base, size_t num_bits, uint64_t* value, uint64_t* min_value, uint64_t num_proofs) {
+    secp256k1_generator asset_genp;
+    size_t plen;
+    size_t num_digits = num_bits/secp256k1_bppp_log2(digit_base);
+    size_t total_digits = num_digits * num_proofs;
+    size_t n = total_digits > digit_base ? total_digits : digit_base;
+    size_t res, i;
+    secp256k1_pedersen_commitment* commits;
+    unsigned char nonce[32];
+    unsigned char* blinds;
+    /* Extra commit is a Joan Shelley lyric */
+    const unsigned char extra_commit[] = "Shock of teal blue beneath clouds gathering, and the light of empty black on the waves at the horizon";
+    const size_t extra_commit_len = sizeof(extra_commit);
+    secp256k1_sha256 transcript;
+    secp256k1_bppp_generators *gs = secp256k1_bppp_generators_create(ctx, n + 8);
+    secp256k1_scratch *scratch = secp256k1_scratch_space_create(ctx, 1000*1000); /* shouldn't need much */
+    unsigned char proof[1000];
+    size_t scratch_checkpoint = secp256k1_scratch_checkpoint(&ctx->error_callback, scratch);
+
+    commits = (secp256k1_pedersen_commitment*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, num_proofs * sizeof(secp256k1_pedersen_commitment));
+    blinds = (unsigned char*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, num_proofs * 32);
+    if (commits == NULL || blinds == NULL) {
+        secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, scratch_checkpoint);
+        return;
+    }
+    asset_genp = *secp256k1_generator_h;
+    plen = 1000;
+    random_scalar_order_b32(nonce);
+    for (i = 0; i < num_proofs; i++) {
+        random_scalar_order_b32(&blinds[32*i]);
+        CHECK(secp256k1_pedersen_commit(ctx, &commits[i], &blinds[32*i], value[i], &asset_genp));
+    }
+    secp256k1_sha256_initialize(&transcript);
+
+    res = secp256k1_bppp_rangeproof_agg_prove(ctx, scratch, gs, &asset_genp, proof, &plen, num_bits, digit_base, num_proofs, value, min_value, commits, blinds, nonce, extra_commit, extra_commit_len);
+    CHECK(res == 1);
+    res = secp256k1_bppp_rangeproof_agg_verify(ctx, scratch, gs, &asset_genp, proof, plen, num_bits, digit_base, num_proofs, min_value, commits, extra_commit, extra_commit_len);
+    CHECK(res == 1);
+
+    proof[plen - 1] ^= 1;
+    res = secp256k1_bppp_rangeproof_agg_verify(ctx, scratch, gs, &asset_genp, proof, plen, num_bits, digit_base, num_proofs, min_value, commits, extra_commit, extra_commit_len);
+    CHECK(res == 0);
+
+    secp256k1_scratch_apply_checkpoint(&ctx->error_callback, scratch, scratch_checkpoint);
+    secp256k1_scratch_space_destroy(ctx, scratch);
+    secp256k1_bppp_generators_destroy(ctx, gs);
+}
+
 void run_bppp_tests(void) {
     /* Update the global context for all bppp tests*/
-    size_t i;
+    size_t i, j;
+    ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
     test_log_exp();
     test_norm_util_helpers();
     test_bppp_generators_api();
     test_bppp_generators_fixed();
     test_bppp_tagged_hash();
+
 
     norm_arg_zero();
     norm_arg_test(1, 8);
@@ -634,6 +682,33 @@ void run_bppp_tests(void) {
     norm_arg_test(64, 64);
     norm_arg_verify_vectors();
 
+    {
+        uint64_t values[8] = {1, 1, 1, 1, 1, 1, 1, 1};
+        uint64_t min_values[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        uint64_t values_64[8] = {1, 123, 411, 43141, 15565, 34511, 542648, 9998};
+        uint64_t min_values_64[8] = {0, 12, 41, 2321, 134, 32, 9, 234};
+        rangeproof_test(2, 64, 738183569968307201, 7);
+        rangeproof_test(2, 64, 738183569968307201, 738183569968307201 - 1);
+        rangeproof_agg_test(2, 1, values, min_values, 1);
+        rangeproof_agg_test(2, 1, values, min_values, 2);
+        rangeproof_agg_test(2, 2, values, min_values, 2);
+        rangeproof_agg_test(2, 4, values, min_values, 2);
+        rangeproof_agg_test(2, 64, values_64, min_values_64, 8);
+        rangeproof_agg_test(2, 64, &values_64[0], &min_values_64[0], 1);
+
+        for (i = 0; i < 5; i++) {
+            for (j = 0; j < 8; j++) {
+                values[j] = secp256k1_testrand64();
+                min_values[j] = values[j] > 0 ? values[j] - 1 : 0;
+            }
+            for (j = 0; j < 4; j++) {
+                rangeproof_agg_test(2, 64, &values[0], &min_values_64[0], 1);
+                rangeproof_agg_test(2, 64, values, min_values, 1 << j);
+                rangeproof_agg_test(4, 64, values, min_values, 1 << j);
+                rangeproof_agg_test(16, 64, values, min_values, 1 << j);
+            }
+        }
+    }
     for (i = 0; i < 16; i++) {
         rangeproof_test(2, 4, i, i/2);
     }
