@@ -81,8 +81,19 @@ static void secp256k1_bppp_rangeproof_prove_round1_impl(
     secp256k1_scalar_chacha20(&prover_ctx->l_m[0], &prover_ctx->l_m[1], nonce, 0);
     secp256k1_scalar_chacha20(&prover_ctx->l_m[2], &prover_ctx->l_m[3], nonce, 1);
     secp256k1_scalar_chacha20(&prover_ctx->l_m[4], &prover_ctx->l_m[5], nonce, 2);
+    secp256k1_scalar_chacha20(&prover_ctx->l_m[6], &prover_ctx->l_m[7], nonce, 3);
+    secp256k1_scalar_clear(&prover_ctx->l_m[7]);
+
     /* Obtain the values for b_m and b_d */
-    secp256k1_scalar_chacha20(&prover_ctx->b_m, &prover_ctx->b_d, nonce, 3);
+    secp256k1_scalar_chacha20(&prover_ctx->b_m, &prover_ctx->b_d, nonce, 4);
+    /*
+    {
+        for (i = 0; i < 7; i++) {
+            secp256k1_scalar_clear(&prover_ctx->l_m[i]);
+        }
+        secp256k1_scalar_set_int(&prover_ctx->b_d, 1);
+        secp256k1_scalar_set_int(&prover_ctx->b_m, 1);
+    } */
 
     for (i = 0; i < digit_base; i++) {
         multiplicities[i] = 0;
@@ -122,8 +133,8 @@ static void secp256k1_bppp_rangeproof_prove_round1_impl(
         secp256k1_ecmult_const(&resj, &gens->gens[g_offset + 2], &neg_ld_i, 256); /* l_d[2] = - l_m[3] */
         secp256k1_ge_set_gej(&d_comm, &d_commj);
         secp256k1_gej_add_ge(&d_commj, &resj, &d_comm);
-        secp256k1_scalar_negate(&neg_ld_i, &prover_ctx->l_m[5]);
-        secp256k1_ecmult_const(&resj, &gens->gens[g_offset + 4], &neg_ld_i, 256); /* l_d[4] = - l_m[5] */
+        secp256k1_scalar_negate(&neg_ld_i, &prover_ctx->l_m[6]);
+        secp256k1_ecmult_const(&resj, &gens->gens[g_offset + 5], &neg_ld_i, 256); /* l_d[5] = - l_m[6] */
         secp256k1_ge_set_gej(&d_comm, &d_commj);
         secp256k1_gej_add_ge(&d_commj, &resj, &d_comm);
     }
@@ -139,7 +150,7 @@ static void secp256k1_bppp_rangeproof_prove_round1_impl(
         secp256k1_gej_add_ge(&m_commj, &resj, &m_comm); /* m_comm cannot be zero*/
     }
 
-    for (i = 0; i < 6; i++) {
+    for (i = 0; i < 8; i++) {
         secp256k1_gej resj;
         secp256k1_ge m_comm;
         secp256k1_ecmult_const(&resj, &gens->gens[g_offset + i], &prover_ctx->l_m[i], 256);
@@ -165,6 +176,7 @@ static void secp256k1_bppp_rangeproof_prove_round1_impl(
 
         secp256k1_sha256_write(transcript, output, 66);
         secp256k1_bppp_challenge_scalar(&prover_ctx->e, transcript, 0);
+        /*secp256k1_scalar_set_int(&prover_ctx->e, 1);*/
     }
 }
 
@@ -189,7 +201,8 @@ static void secp256k1_bppp_rangeproof_prove_round2_impl(
     secp256k1_scalar q_inv;
 
     /* We need only one value in this round, ignore the second value. */
-    secp256k1_scalar_chacha20(&prover_ctx->b_r, &prover_ctx->b_r, nonce, 4);
+    secp256k1_scalar_chacha20(&prover_ctx->b_r, &prover_ctx->b_r, nonce, 5);
+    /* secp256k1_scalar_set_int(&prover_ctx->b_r, 1); */
 
     /* Commit to the vector d in gens */
     secp256k1_ecmult_const(&r_commj, asset_genp, &prover_ctx->b_r, 256);
@@ -217,6 +230,10 @@ static void secp256k1_bppp_rangeproof_prove_round2_impl(
         secp256k1_bppp_challenge_scalar(&prover_ctx->x, transcript, 1);
         secp256k1_bppp_challenge_scalar(&prover_ctx->y, transcript, 2);
         secp256k1_bppp_challenge_scalar(&prover_ctx->lambda, transcript, 3);
+        /*secp256k1_scalar_set_int(&prover_ctx->q_sqrt, 1);
+        secp256k1_scalar_set_int(&prover_ctx->x, 1);
+        secp256k1_scalar_set_int(&prover_ctx->y, 1);
+        secp256k1_scalar_set_int(&prover_ctx->lambda, 1); */
         secp256k1_scalar_sqr(&prover_ctx->q, &prover_ctx->q_sqrt);
     }
     /* Pre-compute powers of q and q_inv. We will need them in future rounds. */
@@ -340,7 +357,7 @@ static void secp256k1_bppp_rangeproof_prove_round3_impl(
 
     /* We don't need only one value in this round, ignore the second value. */
     for (i = 0; i < g_offset/2; i++) {
-        secp256k1_scalar_chacha20(&prover_ctx->s[2*i], &prover_ctx->s[2*i + 1], nonce, i + 4);
+        secp256k1_scalar_chacha20(&prover_ctx->s[2*i], &prover_ctx->s[2*i + 1], nonce, i + 6);
     }
 
     /* The l values must be computed adaptively in order to satisfy the following relation for all Ts. */
@@ -401,22 +418,28 @@ static void secp256k1_bppp_rangeproof_prove_round3_impl(
         secp256k1_scalar_negate(&prover_ctx->b_d, &prover_ctx->b_d);
         secp256k1_scalar_negate(&prover_ctx->b_r, &prover_ctx->b_r);
 
-        secp256k1_scalar_add(&w_w_q[1], &w_w_q[1], &prover_ctx->b_m);
-        secp256k1_scalar_add(&w_w_q[2], &w_w_q[2], &prover_ctx->b_d);
-        secp256k1_scalar_add(&w_w_q[3], &w_w_q[3], &prover_ctx->b_r);
+        #define TPOW(x) (x + 2)
+
+        secp256k1_scalar_add(&w_w_q[TPOW(0)], &w_w_q[TPOW(0)], &prover_ctx->b_m);
+        secp256k1_scalar_add(&w_w_q[TPOW(1)], &w_w_q[TPOW(1)], &prover_ctx->b_d);
+        secp256k1_scalar_add(&w_w_q[TPOW(2)], &w_w_q[TPOW(2)], &prover_ctx->b_r);
 
         secp256k1_scalar_inverse_var(&y_inv, &prover_ctx->y);
 
         /* Balance out b_s = q^(i+1)*s[i]*s[i] = w_w_q[0] */
-        prover_ctx->b_s = w_w_q[0];
-        /* Note the limits on i from 1 to 8.*/
-        for (i = 1; i < 8; i++) {
+        secp256k1_scalar_mul(&prover_ctx->b_s, &prover_ctx->l_m[0], &prover_ctx->y);
+        secp256k1_scalar_add(&prover_ctx->b_s, &prover_ctx->b_s, &w_w_q[TPOW(-1)]);
+
+        /* Note the limits on i from 0 to 8.*/
+        for (i = 0; i < 9; i++) {
             secp256k1_scalar_mul(&w_w_q[i], &w_w_q[i], &y_inv);
         }
-        secp256k1_scalar_add(&w_w_q[7], &w_w_q[7], &prover_ctx->l_m[4]);
-        secp256k1_scalar_add(&w_w_q[4], &w_w_q[4], &prover_ctx->l_m[2]);
-        secp256k1_scalar_add(&w_w_q[3], &w_w_q[3], &prover_ctx->l_m[1]);
-        secp256k1_scalar_add(&w_w_q[2], &w_w_q[2], &prover_ctx->l_m[0]);
+        secp256k1_scalar_add(&w_w_q[TPOW(6)], &w_w_q[TPOW(6)], &prover_ctx->l_m[5]);
+        secp256k1_scalar_add(&w_w_q[TPOW(5)], &w_w_q[TPOW(5)], &prover_ctx->l_m[4]);
+        /* l_m[3] maps to T^4 */
+        /* secp256k1_scalar_add(&w_w_q[TPOW(3)], &w_w_q[TPOW(3)], &prover_ctx->l_m[3]); */
+        secp256k1_scalar_add(&w_w_q[TPOW(2)], &w_w_q[TPOW(2)], &prover_ctx->l_m[2]);
+        secp256k1_scalar_add(&w_w_q[TPOW(1)], &w_w_q[TPOW(1)], &prover_ctx->l_m[1]);
 
         {
             /* Compute w_w_q[6] = Sum(2*lambda^i*gamma[i])*/
@@ -430,16 +453,17 @@ static void secp256k1_bppp_rangeproof_prove_round3_impl(
                 secp256k1_scalar_add(&res, &res, &tmp);
                 secp256k1_scalar_mul(&lambda_pow_i, &lambda_pow_i, &prover_ctx->lambda);
             }
-            secp256k1_scalar_add(&w_w_q[6], &w_w_q[6], &res);
+            secp256k1_scalar_add(&w_w_q[TPOW(2)], &w_w_q[TPOW(2)], &res);
         }
 
         /* Set all l_s values as negation of w_w_q */
-        secp256k1_scalar_negate(&prover_ctx->l_s[0], &w_w_q[1]);
-        secp256k1_scalar_negate(&prover_ctx->l_s[1], &w_w_q[2]);
-        secp256k1_scalar_negate(&prover_ctx->l_s[2], &w_w_q[3]);
-        secp256k1_scalar_negate(&prover_ctx->l_s[3], &w_w_q[4]);
-        secp256k1_scalar_negate(&prover_ctx->l_s[4], &w_w_q[6]);
-        secp256k1_scalar_negate(&prover_ctx->l_s[5], &w_w_q[7]);
+        secp256k1_scalar_negate(&prover_ctx->l_s[0], &w_w_q[TPOW(-2)]); /* T^-1 */
+        secp256k1_scalar_negate(&prover_ctx->l_s[1], &w_w_q[TPOW(0)]); /* T^1 */
+        secp256k1_scalar_negate(&prover_ctx->l_s[2], &w_w_q[TPOW(1)]); /* T^2 */
+        secp256k1_scalar_negate(&prover_ctx->l_s[3], &w_w_q[TPOW(2)]); /* T^3 */
+        secp256k1_scalar_negate(&prover_ctx->l_s[4], &w_w_q[TPOW(4)]); /* T^5 */
+        secp256k1_scalar_negate(&prover_ctx->l_s[5], &w_w_q[TPOW(5)]); /* T^6 */
+        secp256k1_scalar_negate(&prover_ctx->l_s[6], &w_w_q[TPOW(6)]); /* T^7 */
     }
     /* Commit to the vector s in gens, with b_s along asset and l in H_vec */
     secp256k1_ecmult_const(&s_commj, asset_genp, &prover_ctx->b_s, 256);
@@ -451,7 +475,7 @@ static void secp256k1_bppp_rangeproof_prove_round3_impl(
         secp256k1_gej_add_ge(&s_commj, &resj, &s_comm); /* s_comm cannot be 0 */
     }
 
-    for (i = 0; i < 6; i++) {
+    for (i = 0; i < 7; i++) {
         secp256k1_gej resj;
         secp256k1_ge s_comm;
         secp256k1_ecmult_const(&resj, &gens->gens[g_offset + i], &prover_ctx->l_s[i], 256);
@@ -470,6 +494,7 @@ static void secp256k1_bppp_rangeproof_prove_round3_impl(
 
         secp256k1_sha256_write(transcript, output, 33);
         secp256k1_bppp_challenge_scalar(&prover_ctx->t, transcript, 0);
+        /*secp256k1_scalar_set_int(&prover_ctx->t, 1);*/
     }
 }
 
@@ -503,43 +528,45 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
     size_t g_offset = digit_base > total_digits ? digit_base : total_digits;
     /* Compute w = s + t*m + t^2*d + t^3*r + t^4*alpha_m. Store w in s*/
     /* Has capacity 8 because we can re-use it as the c-poly. */
-    secp256k1_scalar t_pows[8];
+    secp256k1_scalar t_pows[8], c_poly[8];
+    secp256k1_scalar t_inv;
     secp256k1_ge *gs;
     int res;
+
+    secp256k1_scalar_inverse(&t_inv, &prover_ctx->t);
     secp256k1_bppp_rangeproof_powers_of_q(&t_pows[0], &prover_ctx->t, 7); /* Computes from t^1 to t^7 */
 
     for (i = 0; i < g_offset; i++) {
+        secp256k1_scalar_mul(&prover_ctx->s[i], &prover_ctx->s[i], &t_inv);
         if (i < total_digits) {
-            secp256k1_scalar_mul(&prover_ctx->r[i], &prover_ctx->r[i], &t_pows[2]);
+            secp256k1_scalar_mul(&prover_ctx->r[i], &prover_ctx->r[i], &t_pows[1]);
             secp256k1_scalar_add(&prover_ctx->s[i], &prover_ctx->s[i], &prover_ctx->r[i]);
 
-            secp256k1_scalar_mul(&prover_ctx->d[i], &prover_ctx->d[i], &t_pows[1]);
+            secp256k1_scalar_mul(&prover_ctx->d[i], &prover_ctx->d[i], &t_pows[0]);
             secp256k1_scalar_add(&prover_ctx->s[i], &prover_ctx->s[i], &prover_ctx->d[i]);
         }
         if (i < digit_base) {
-            secp256k1_scalar_mul(&prover_ctx->m[i], &prover_ctx->m[i], &t_pows[0]);
             secp256k1_scalar_add(&prover_ctx->s[i], &prover_ctx->s[i], &prover_ctx->m[i]);
 
-            secp256k1_scalar_mul(&prover_ctx->alpha_m[i], &prover_ctx->alpha_m[i], &t_pows[3]);
+            secp256k1_scalar_mul(&prover_ctx->alpha_m[i], &prover_ctx->alpha_m[i], &t_pows[2]);
             secp256k1_scalar_add(&prover_ctx->s[i], &prover_ctx->s[i], &prover_ctx->alpha_m[i]);
         }
     }
     /* Compute l = l_s + t*l_m + t^2*l_d + t^3*l_r. Store l in l_s*/
-    for (i = 0; i < 6; i++) {
-        secp256k1_scalar tmp;
-        secp256k1_scalar_mul(&tmp, &prover_ctx->l_m[i], &t_pows[0]);
-        secp256k1_scalar_add(&prover_ctx->l_s[i], &prover_ctx->l_s[i], &tmp);
+    for (i = 0; i < 7; i++) {
+        secp256k1_scalar_mul(&prover_ctx->l_s[i], &prover_ctx->l_s[i], &t_inv);
+        secp256k1_scalar_add(&prover_ctx->l_s[i], &prover_ctx->l_s[i], &prover_ctx->l_m[i]);
     }
     /* Manually add l_d2 and l_d4 */
     {
         secp256k1_scalar tmp, gamma_sum;
-        secp256k1_scalar_mul(&tmp, &prover_ctx->l_m[3], &t_pows[1]);
+        secp256k1_scalar_mul(&tmp, &prover_ctx->l_m[3], &t_pows[0]);
         secp256k1_scalar_negate(&tmp, &tmp);/* l_d2 = -l_m3 */
         secp256k1_scalar_add(&prover_ctx->l_s[2], &prover_ctx->l_s[2], &tmp);
 
-        secp256k1_scalar_mul(&tmp, &prover_ctx->l_m[5], &t_pows[1]);
-        secp256k1_scalar_negate(&tmp, &tmp);/* l_d4 = -l_m5 */
-        secp256k1_scalar_add(&prover_ctx->l_s[4], &prover_ctx->l_s[4], &tmp);
+        secp256k1_scalar_mul(&tmp, &prover_ctx->l_m[6], &t_pows[0]);
+        secp256k1_scalar_negate(&tmp, &tmp);/* l_d5 = -l_m6 */
+        secp256k1_scalar_add(&prover_ctx->l_s[5], &prover_ctx->l_s[5], &tmp);
 
         {
             secp256k1_scalar lambda_pow_i, gamma_lambda_pow_i;
@@ -551,23 +578,26 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
                 secp256k1_scalar_mul(&lambda_pow_i, &lambda_pow_i, &prover_ctx->lambda);
             }
         }
-        /* Add two_gamma * t5 to l_s[0] */
-        secp256k1_scalar_add(&tmp, &t_pows[4], &t_pows[4]);
+        /* Add two_gamma * t3 to l_s[0] */
+        secp256k1_scalar_add(&tmp, &t_pows[2], &t_pows[2]);
         secp256k1_scalar_mul(&tmp, &tmp, &gamma_sum);
         secp256k1_scalar_add(&prover_ctx->l_s[0], &prover_ctx->l_s[0], &tmp);
     }
-    /* Set non used 7th and 8th l_s to 0 */
-    secp256k1_scalar_set_int(&prover_ctx->l_s[6], 0);
+    /* Set non used 8th l_s to 0 */
     secp256k1_scalar_set_int(&prover_ctx->l_s[7], 0);
 
-    /* Make c = y*(T, T^2, T^3, T^4, T^6, T^7, 0, 0) */
-    t_pows[4] = t_pows[5];
-    t_pows[5] = t_pows[6];
-    for (i = 0; i < 6; i++) {
-        secp256k1_scalar_mul(&t_pows[i], &t_pows[i], &prover_ctx->y);
+    /* Make c = y*(T^-1, T, T^2, T^3, T^5, T^6, T^7, 0) */
+    c_poly[0] = t_inv;
+    c_poly[1] = t_pows[0];
+    c_poly[2] = t_pows[1];
+    c_poly[3] = t_pows[2];
+    c_poly[4] = t_pows[4];
+    c_poly[5] = t_pows[5];
+    c_poly[6] = t_pows[6];
+    secp256k1_scalar_set_int(&c_poly[7], 0);
+    for (i = 0; i < 7; i++) {
+        secp256k1_scalar_mul(&c_poly[i], &c_poly[i], &prover_ctx->y);
     }
-    secp256k1_scalar_set_int(&t_pows[6], 0);
-    secp256k1_scalar_set_int(&t_pows[7], 0);
     /* Call the norm argument on w, l */
     /* We have completed the blinding, none of part that comes from this point on
        needs to constant time. We can safely early return
@@ -594,7 +624,7 @@ static int secp256k1_bppp_rangeproof_prove_round4_impl(
         g_offset,
         prover_ctx->l_s,
         8,
-        t_pows,
+        c_poly,
         8
     );
 
@@ -664,7 +694,7 @@ static int secp256k1_bppp_rangeproof_prove_impl(
     prover_ctx.r = (secp256k1_scalar*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, total_digits * sizeof(secp256k1_scalar));
     prover_ctx.alpha_m = (secp256k1_scalar*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, digit_base * sizeof(secp256k1_scalar));
 
-    prover_ctx.l_m = (secp256k1_scalar*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, 6 * sizeof(secp256k1_scalar));
+    prover_ctx.l_m = (secp256k1_scalar*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, 8 * sizeof(secp256k1_scalar));
     prover_ctx.l_s = (secp256k1_scalar*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, h_len * sizeof(secp256k1_scalar));
 
     prover_ctx.q_pows = (secp256k1_scalar*)secp256k1_scratch_alloc(&ctx->error_callback, scratch, g_offset * sizeof(secp256k1_scalar));
@@ -761,6 +791,7 @@ typedef struct secp256k1_bppp_verify_cb_data {
     const unsigned char *proof;
     const secp256k1_scalar *g_vec_pub_deltas;
     const secp256k1_scalar *t_pows;
+    const secp256k1_scalar *t_inv;
     const secp256k1_scalar *v;
     const secp256k1_ge *asset_genp;
     const secp256k1_ge *commit;
@@ -781,25 +812,25 @@ static int secp256k1_bppp_verify_cb(secp256k1_scalar *sc, secp256k1_ge *pt, size
             if (!secp256k1_eckey_pubkey_parse(pt, data->proof, 33)) {
                 return 0;
             }
-            *sc = data->t_pows[0];
+            secp256k1_scalar_set_int(sc, 1);
             break;
         case 2:  /* t^2 D */
             if (!secp256k1_eckey_pubkey_parse(pt, &data->proof[33], 33)) {
                 return 0;
             }
-            *sc = data->t_pows[1];
+            *sc = data->t_pows[0];
             break;
         case 3:  /* t^3 R */
             if (!secp256k1_eckey_pubkey_parse(pt, &data->proof[33 * 2], 33)) {
                 return 0;
             }
-            *sc = data->t_pows[2];
+            *sc = data->t_pows[1];
             break;
         case 4:  /* 1. S */
             if (!secp256k1_eckey_pubkey_parse(pt, &data->proof[33 * 3], 33)) {
                 return 0;
             }
-            secp256k1_scalar_set_int(sc, 1);
+            *sc = *data->t_inv;
             break;
         default:
             /* 2t^5 V(commit) */
@@ -808,7 +839,7 @@ static int secp256k1_bppp_verify_cb(secp256k1_scalar *sc, secp256k1_ge *pt, size
                 secp256k1_scalar two;
                 secp256k1_scalar_set_int(&two, 2);
                 /* TODO: pass 2^t5 here directly */
-                *sc = data->t_pows[4];
+                *sc = data->t_pows[2];
                 secp256k1_scalar_mul(sc, sc, &two);
                 secp256k1_scalar_mul(sc, sc, data->lambda_pow_j);
                 secp256k1_scalar_mul(data->lambda_pow_j, data->lambda_pow_j, data->lambda);
@@ -895,19 +926,26 @@ static int secp256k1_bppp_rangeproof_verify_impl(
     /* Verify round 1 */
     secp256k1_sha256_write(&transcript, proof, 66);
     secp256k1_bppp_challenge_scalar(&e, &transcript, 0);
+    /*secp256k1_scalar_set_int(&e, 1);*/
 
     /* Verify round 2 */
     secp256k1_sha256_write(&transcript, &proof[33*2], 33);
     secp256k1_bppp_challenge_scalar(&q_sqrt, &transcript, 0);
     secp256k1_bppp_challenge_scalar(&x, &transcript, 1);
     secp256k1_bppp_challenge_scalar(&y, &transcript, 2);
+    /*secp256k1_scalar_set_int(&q_sqrt, 1);
+    secp256k1_scalar_set_int(&x, 1);
+    secp256k1_scalar_set_int(&y, 1);*/
     secp256k1_scalar_sqr(&q, &q_sqrt);
     secp256k1_scalar_inverse_var(&q_inv, &q);
     secp256k1_bppp_challenge_scalar(&lambda, &transcript, 3);
+    /*secp256k1_scalar_set_int(&lambda, 1);*/
+
 
     /* Verify round 3 */
     secp256k1_sha256_write(&transcript, &proof[33*3], 33);
     secp256k1_bppp_challenge_scalar(&t, &transcript, 0);
+    /*secp256k1_scalar_set_int(&t, 1);*/
 
     secp256k1_bppp_rangeproof_powers_of_q(q_pows, &q, g_offset);
     secp256k1_bppp_rangeproof_powers_of_q(q_inv_pows, &q_inv, g_offset);
@@ -918,10 +956,10 @@ static int secp256k1_bppp_rangeproof_verify_impl(
         /* g_vec_pub_delta[i] = (b^i*t^3 + (-x)*t^2 + (x/e+i)*t^4)*q_inv^i + e*t^2 */
         secp256k1_scalar b_pow_i_t3, neg_x_t2, x_t4, e_t2, base, lambda_pow_j;
         secp256k1_scalar_negate(&neg_x_t2, &x);
-        secp256k1_scalar_mul(&neg_x_t2, &neg_x_t2, &t_pows[1]);
-        x_t4 = t_pows[3];
+        secp256k1_scalar_mul(&neg_x_t2, &neg_x_t2, &t_pows[0]);
+        x_t4 = t_pows[2];
         secp256k1_scalar_mul(&x_t4, &x_t4, &x);
-        e_t2 = t_pows[1];
+        e_t2 = t_pows[0];
         secp256k1_scalar_mul(&e_t2, &e_t2, &e);
         secp256k1_scalar_set_int(&base, digit_base);
         secp256k1_scalar_set_int(&lambda_pow_j, 1);
@@ -930,7 +968,7 @@ static int secp256k1_bppp_rangeproof_verify_impl(
             secp256k1_scalar_clear(&g_vec_pub_deltas[i]);
             if (i < total_digits) {
                 if (i % num_digits == 0) {
-                    secp256k1_scalar_mul(&b_pow_i_t3, &t_pows[2], &lambda_pow_j);
+                    secp256k1_scalar_mul(&b_pow_i_t3, &t_pows[1], &lambda_pow_j);
                     secp256k1_scalar_mul(&lambda_pow_j, &lambda_pow_j, &lambda);
                 }
                 secp256k1_scalar_add(&g_vec_pub_deltas[i], &b_pow_i_t3, &neg_x_t2); /* g_vec_pub_delta[i] = b^i*t^3 + (-x)*t^2 */
@@ -956,15 +994,12 @@ static int secp256k1_bppp_rangeproof_verify_impl(
 
     {
         /* v = 2*t5(<one_vec, q^(i+1)> + <b^i, e> + <b^i, -x*q^-(i+1)>) + x^2t^8(<q^-(i+1)/(e+i), 1/(e+i)>) */
-        secp256k1_scalar two_t5, x2_t8, b_pow_i, neg_x_q_inv_pow_plus_e, e_plus_i_inv, base, v_g1, v_g2, sc_min_v, lambda_pow_j;
+        secp256k1_scalar two_t5, b_pow_i, neg_x_q_inv_pow_plus_e, base, v_g1, sc_min_v, lambda_pow_j;
         size_t j;
         secp256k1_scalar_set_int(&two_t5, 2);
-        secp256k1_scalar_mul(&two_t5, &two_t5, &t_pows[4]);
-        secp256k1_scalar_mul(&x2_t8, &t_pows[3], &x);
-        secp256k1_scalar_sqr(&x2_t8, &x2_t8);
+        secp256k1_scalar_mul(&two_t5, &two_t5, &t_pows[2]);
         secp256k1_scalar_set_int(&lambda_pow_j, 1);
         secp256k1_scalar_clear(&v_g1);
-        secp256k1_scalar_clear(&v_g2);
         secp256k1_scalar_set_int(&base, digit_base);
 
         /* Compute v_g1 = 2*t5(<one_vec, q^(i+1)> + <b^i, e> + <b^i, -x*q^-(i+1)>) */
@@ -987,25 +1022,14 @@ static int secp256k1_bppp_rangeproof_verify_impl(
             secp256k1_scalar_mul(&lambda_pow_j, &lambda_pow_j, &lambda);
         }
         secp256k1_scalar_mul(&v_g1, &v_g1, &two_t5); /* v_g1 = 2*t5(<one_vec, q^(i+1)> + <b^i, e> + <b^i, -x*q^-(i+1)> - min_value) */
-
-        /* Compute v_g2 = x^2t^8(<q^-(i+1)/(e+i), 1/(e+i)>) */
-        for (i = 0; i < digit_base; i++) {
-            secp256k1_scalar_set_int(&e_plus_i_inv, i); /* digit base is less than 2^32, can directly set*/
-            secp256k1_scalar_add(&e_plus_i_inv, &e_plus_i_inv, &e); /* (e + i)*/
-            secp256k1_scalar_inverse_var(&e_plus_i_inv, &e_plus_i_inv); /* 1/(e +i)*/
-            secp256k1_scalar_sqr(&e_plus_i_inv, &e_plus_i_inv); /* 1/(e +i)^2 */
-            secp256k1_scalar_mul(&e_plus_i_inv, &e_plus_i_inv, &q_inv_pows[i]); /* q^-(i+1)/(e+i)^2 */
-            secp256k1_scalar_add(&v_g2, &v_g2, &e_plus_i_inv); /* v_g2 = <q^-(i+1)/(e+i), 1/(e+i)> */
-        }
-        secp256k1_scalar_mul(&v_g2, &v_g2, &x2_t8); /* v_g2 = x^2t^8(<q^-(i+1)/(e+i), 1/(e+i)>) */
-        secp256k1_scalar_add(&v_g, &v_g1, &v_g2); /* v_g = v_g1 + v_g2 */
+        v_g = v_g1;
     }
     /* Ecmult to compute C = S + tM + t^2D + t^3R + 2t^5V + <g_vec_pub_deltas, G_vec> + v_g*A(asset_genP) */
     {
         secp256k1_bppp_verify_cb_data cb_data;
         secp256k1_gej c_commj;
         secp256k1_ge c_comm;
-        secp256k1_scalar lambda_pow_j;
+        secp256k1_scalar lambda_pow_j, t_inv, c_poly[8];
         size_t num_points;
         cb_data.g_vec_pub_deltas = g_vec_pub_deltas;
         cb_data.v = &v_g;
@@ -1014,6 +1038,8 @@ static int secp256k1_bppp_rangeproof_verify_impl(
         cb_data.g_gens = gens->gens;
         cb_data.proof = proof;
         cb_data.t_pows = t_pows;
+        secp256k1_scalar_inverse(&t_inv, &t);
+        cb_data.t_inv = &t_inv;
         cb_data.num_proofs = num_proofs;
         cb_data.lambda = &lambda;
         secp256k1_scalar_set_int(&lambda_pow_j, 1);
@@ -1026,14 +1052,18 @@ static int secp256k1_bppp_rangeproof_verify_impl(
         }
 
         secp256k1_ge_set_gej_var(&c_comm, &c_commj);
-        /* Make c = y*(T, T^2, T^3, T^4, T^6, T^7, 0, 0) */
-        t_pows[4] = t_pows[5];
-        t_pows[5] = t_pows[6];
-        for (i = 0; i < 6; i++) {
-            secp256k1_scalar_mul(&t_pows[i], &t_pows[i], &y);
+        /* Make c = y*(1/T, T, T^2, T^3, T^5, T^6, T^7, 0) */
+        c_poly[0] = t_inv;
+        c_poly[1] = t_pows[0];
+        c_poly[2] = t_pows[1];
+        c_poly[3] = t_pows[2];
+        c_poly[4] = t_pows[4];
+        c_poly[5] = t_pows[5];
+        c_poly[6] = t_pows[6];
+        for (i = 0; i < 7; i++) {
+            secp256k1_scalar_mul(&c_poly[i], &c_poly[i], &y);
         }
-        secp256k1_scalar_clear(&t_pows[6]);
-        secp256k1_scalar_clear(&t_pows[7]);
+        secp256k1_scalar_clear(&c_poly[7]);
 
         res = secp256k1_bppp_rangeproof_norm_product_verify(
             ctx,
@@ -1045,7 +1075,7 @@ static int secp256k1_bppp_rangeproof_verify_impl(
             gens,
             asset_genp,
             g_offset,
-            t_pows,
+            c_poly,
             8,
             &c_comm
         );

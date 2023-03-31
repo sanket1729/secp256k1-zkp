@@ -36,7 +36,7 @@ static void bench_bppp_setup(void* arg) {
     memset(data->nonce, 0x0, 32);
     for (i = 0; i < data->num_proofs; i++) {
         data->min_value[i] = 0;
-        data->value[i] = 10;
+        data->value[i] = 100 % (1 << data->n_bits);
         memset(&data->blind[32*i], 0x77, 32);
         CHECK(secp256k1_pedersen_commit(data->ctx, &data->commit[i], &data->blind[32*i], data->value[i], secp256k1_generator_h));
     }
@@ -71,24 +71,57 @@ int main(void) {
     bench_bppp_data data;
     int iters = get_iters(64);
     char test_name[64];
+    size_t agg_idx, base_idx;
 
-    data.ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-    data.scratch = secp256k1_scratch_space_create(data.ctx, 80 * 1024);
-    data.proofs = (unsigned char *)malloc(iters * MAX_PROOF_SIZE);
-    data.num_proofs = 2;
-    data.gens = secp256k1_bppp_generators_create(data.ctx, 16 * data.num_proofs + 8);
-    data.n_bits = 1ul << 6;
-    data.base = 16;
-    sprintf(test_name, "bppp_prove_64bits_16base");
-    run_benchmark(test_name, bench_bppp_prove, bench_bppp_setup, NULL, &data, 4, iters);
 
-    sprintf(test_name, "bppp_verify_64bits_16base");
-    run_benchmark(test_name, bench_bppp_verify, bench_bppp_setup, NULL, &data, 20, iters);
+    size_t bases[6] = {2, 2, 4, 4, 4, 16};
+                    /* 1, 1, 2, 2, 2, 4*/
+    size_t num_bits[6] = {2, 4, 8, 16, 32, 64};
+                    /* 2, 4, 4, 8, 16, 16*/
+    size_t num_gens[6] = {2, 4, 4, 8, 16, 16};
+    for (base_idx = 0; base_idx < 6; base_idx++) {
+        data.ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+        data.scratch = secp256k1_scratch_space_create(data.ctx, 8000 * 1024);
+        data.proofs = (unsigned char *)malloc(iters * MAX_PROOF_SIZE);
+        data.num_proofs = 1;
+        data.gens = secp256k1_bppp_generators_create(data.ctx, num_gens[base_idx] + 8);
+        CHECK(data.gens != NULL);
+        data.n_bits = num_bits[base_idx];
+        data.base = bases[base_idx];
+        sprintf(test_name, "bppp_prove_%ldbits_%ldbase", num_bits[base_idx], bases[base_idx]);
+        run_benchmark(test_name, bench_bppp_prove, bench_bppp_setup, NULL, &data, 4, iters);
 
-    secp256k1_scratch_space_destroy(data.ctx, data.scratch);
-    free(data.proofs);
-    secp256k1_bppp_generators_destroy(data.ctx, data.gens);
-    secp256k1_context_destroy(data.ctx);
+        sprintf(test_name, "bppp_verify_%ldbits_%ldbase", num_bits[base_idx], bases[base_idx]);
+        run_benchmark(test_name, bench_bppp_verify, bench_bppp_setup, NULL, &data, 20, iters);
 
+        secp256k1_scratch_space_destroy(data.ctx, data.scratch);
+        free(data.proofs);
+        secp256k1_bppp_generators_destroy(data.ctx, data.gens);
+        secp256k1_context_destroy(data.ctx);
+    }
+
+    size_t agg_prf_sizes[7] = {1, 2, 4, 8, 16, 32, 64};
+    size_t base_sizes[7] = {16, 16, 16, 16, 16, 256, 256};
+    size_t num_gens1[7] = {16, 32, 64, 128, 256, 256, 512};
+
+    for (agg_idx = 0; agg_idx < 7; agg_idx++) {
+        data.ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+        data.scratch = secp256k1_scratch_space_create(data.ctx, 8000 * 1024);
+        data.proofs = (unsigned char *)malloc(iters * MAX_PROOF_SIZE);
+        data.num_proofs = agg_prf_sizes[agg_idx];
+        data.base = base_sizes[agg_idx];
+        data.gens = secp256k1_bppp_generators_create(data.ctx, num_gens1[agg_idx] + 8);
+        data.n_bits = 1ul << 6;
+        sprintf(test_name, "bppp_prove_%ldbits", data.n_bits);
+        run_benchmark(test_name, bench_bppp_prove, bench_bppp_setup, NULL, &data, 4, iters);
+
+        sprintf(test_name, "bppp_verify_%ldbits", data.n_bits);
+        run_benchmark(test_name, bench_bppp_verify, bench_bppp_setup, NULL, &data, 20, iters);
+
+        secp256k1_scratch_space_destroy(data.ctx, data.scratch);
+        free(data.proofs);
+        secp256k1_bppp_generators_destroy(data.ctx, data.gens);
+        secp256k1_context_destroy(data.ctx);
+    }
     return 0;
 }
