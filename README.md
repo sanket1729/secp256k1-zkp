@@ -1,3 +1,10 @@
+=========
+Bulletproofs++ Benchmark building instructions:
+
+1. Configure the library with `./configure --enable-dev-mode`
+2. Build the library with `make -j{num_cores}`
+3. Run the benchmark with `./bench_bppp`
+
 libsecp256k1
 ============
 
